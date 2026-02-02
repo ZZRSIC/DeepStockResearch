@@ -1,0 +1,1 @@
+python pipeline.py --news-file /Users/sic/code/stock_deepresearch/new.txt--output /Users/sic/code/stock_deepresearch/output
