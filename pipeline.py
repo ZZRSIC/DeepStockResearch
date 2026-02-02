@@ -133,12 +133,12 @@ class AStockDeepResearchPipeline:
         logger.info(f"深度研究完成 - 生成 {len(research_results['questions'])} 个研究问题")
         logger.info(f"Tavily API 调用次数: {research_results.get('tavily_call_count', 0)}")
         
-        # Step D: 投资价值打分
-        logger.info("Step D: 计算投资价值评分...")
+        # Step D: 推荐列表（不做打分）
+        logger.info("Step D: 生成推荐列表...")
         scored_stocks = self.stock_scorer.score_stocks(
             candidate_stocks, research_results, parsed_news
         )
-        logger.info(f"评分完成 - Top 1: {scored_stocks[0]['name']} (分数: {scored_stocks[0]['total_score']:.2f})")
+        logger.info(f"推荐列表生成完成 - Top 1: {scored_stocks[0]['name']}")
         
         # Step E: 生成报告
         logger.info("Step E: 生成投资分析报告...")
@@ -161,6 +161,25 @@ class AStockDeepResearchPipeline:
             # 保存文本格式
             text_path = os.path.join(output_dir, f"report_{timestamp}.txt")
             self.report_generator.save_report(report, text_path, format='text')
+
+            # 保存精简结果（仅推荐股票）
+            result_items = []
+            for stock in report.get('top_stocks', []):
+                logic = stock.get('投资逻辑', {})
+                result_items.append({
+                    "排名": stock.get("排名"),
+                    "股票代码": stock.get("股票代码"),
+                    "股票名称": stock.get("股票名称"),
+                    "所属行业": stock.get("所属行业"),
+                    "关联原因": logic.get("关联原因") or logic.get("为什么相关"),
+                    "关联路径": logic.get("关联路径"),
+                    "相关性强度": logic.get("相关性强度")
+                })
+
+            result_path = os.path.join(output_dir, "result.json")
+            with open(result_path, 'w', encoding='utf-8') as f:
+                import json
+                json.dump(result_items, f, ensure_ascii=False, indent=2)
             
             logger.info(f"报告已保存至: {output_dir}")
         
@@ -239,10 +258,15 @@ def main():
         print("-" * 80)
         
         for stock in report['top_stocks']:
-            print(f"\n#{stock['排名']} {stock['股票名称']} ({stock['股票代码']})")
-            print(f"    行业: {stock['所属行业']}")
-            print(f"    综合评分: {stock['综合评分']}/100")
-            print(f"    投资逻辑: {stock['投资逻辑']['为什么相关']}")
+            logic = stock.get('投资逻辑', {})
+            relation_reason = logic.get('关联原因') or logic.get('为什么相关') or '未知'
+            relation_strength = logic.get('相关性强度')
+            strength_text = f" | 强度: {relation_strength}" if relation_strength else ""
+            print(
+                f"#{stock['排名']} {stock['股票名称']} ({stock['股票代码']})"
+                f" | 行业: {stock['所属行业']}"
+                f" | 逻辑: {relation_reason}{strength_text}"
+            )
         
         print("\n" + "=" * 80)
         print(f"完整投资分析报告已保存至: {args.output}")

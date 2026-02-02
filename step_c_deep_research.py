@@ -4,6 +4,7 @@ Step C: DeepResearch 多轮检索模块
 """
 
 import logging
+import re
 from typing import Dict, List, Optional
 from openai import OpenAI
 import json
@@ -461,48 +462,113 @@ class DeepResearcher:
                              relevant_stocks: List[Dict]) -> List[str]:
         """构建多个搜索查询策略"""
         queries = []
-        event_summary = parsed_news['event_summary']
-        stock_names = [s['name'] for s in relevant_stocks]
-        search_keywords = parsed_news.get('search_keywords', [])
-        key_entities = parsed_news.get('key_entities', {})
-        products = key_entities.get('products', [])
-        industries = key_entities.get('industries', [])
-        companies = key_entities.get('companies', [])
-        
-        # 策略1: 问题 + 关键词（不带股票名）
-        terms = [question]
-        if search_keywords:
-            terms.extend(search_keywords[:2])
-        elif companies:
-            terms.extend(companies[:2])
-        elif products:
-            terms.extend(products[:2])
-        elif event_summary:
-            terms.append(event_summary)
-        query1 = " ".join([t for t in terms if t])
-        if query1.strip():
-            queries.append(query1)
-        
-        # 策略2: 问题 + 行业（不带股票名）
-        if len(relevant_stocks) > 0 or industries:
-            # 提取行业信息
-            industries = list(set([s.get('industry', '') for s in relevant_stocks[:3] if s.get('industry')])) or industries
-            industry_str = ' '.join(industries[:2]) if industries else ''
-            query2 = f"{question} {industry_str}".strip()
-            if query2:
-                queries.append(query2)
-        
-        # 策略3: 事件摘要 + 关键词补充（仅在前两条为空时使用）
-        if len(queries) == 0 and event_summary:
-            extra_terms = [event_summary]
-            extra_terms.extend(search_keywords[:2])
-            extra_terms.extend(products[:2])
-            query3 = " ".join([t for t in extra_terms if t])
-            if query3:
-                queries.append(query3)
-        
+        event_summary = parsed_news.get('event_summary', '')
+        question_text = self._clean_query_text(self._extract_question_text(question))
+
+        # 将问题与事件摘要合并为上下文，只基于上下文提炼关键词
+        context_text = f"{question_text} {event_summary}".strip()
+        terms = self._extract_query_terms(context_text, parsed_news, relevant_stocks)
+
+        # 主查询：高质量关键词组合（不再在查询后追加额外信息）
+        if terms:
+            queries.append(" ".join(terms[:8]))
+
+        # 次查询：当关键词不足时，用问题/摘要补足
+        if (len(terms) < 3) and len(queries) < 2:
+            fallback = question_text or event_summary
+            fallback = self._shorten_query_text(fallback)
+            if fallback and fallback not in queries:
+                queries.append(fallback)
+
+        # 兜底：保证至少有一个查询
+        if not queries and event_summary:
+            queries.append(self._shorten_query_text(event_summary))
+
         # 去重并返回
-        return list(dict.fromkeys(queries))  # 保持顺序的去重
+        return list(dict.fromkeys([q for q in queries if q]))
+
+    def _extract_question_text(self, question) -> str:
+        """从问题对象中提取可用文本"""
+        if isinstance(question, dict):
+            for key in ("question", "query", "q", "text", "title"):
+                value = question.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            return str(question)
+        if question is None:
+            return ""
+        return str(question).strip()
+
+    def _clean_query_text(self, text: str) -> str:
+        """清洗问题文本，去掉编号/括号提示等噪音"""
+        if not text:
+            return ""
+        text = text.strip()
+        text = re.sub(r"^\s*(?:问题|Q|问|Question)?\s*\d+\s*[:：\.\-、]?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"[（(][^)）]{0,80}[)）]", "", text)
+        text = re.sub(r"\s+", " ", text)
+        return text.strip(" ？?。!！,，；;:")
+
+    def _shorten_query_text(self, text: str, max_len: int = 60) -> str:
+        """截断过长文本，保留首句核心片段"""
+        if not text:
+            return ""
+        text = text.strip()
+        if len(text) <= max_len:
+            return text
+        parts = re.split(r"[。！？!?；;，,]", text)
+        for part in parts:
+            part = part.strip()
+            if len(part) >= 6:
+                return part[:max_len]
+        return text[:max_len]
+
+    def _extract_query_terms(self, context_text: str, parsed_news: Dict,
+                             relevant_stocks: List[Dict]) -> List[str]:
+        """从上下文中提取高质量关键词"""
+        if not context_text:
+            return []
+
+        terms = []
+        key_entities = parsed_news.get('key_entities', {}) or {}
+        entity_candidates = []
+        for key in ("companies", "products", "industries", "regulators", "regions"):
+            entity_candidates.extend(key_entities.get(key, []) or [])
+
+        # 仅保留上下文中出现的实体名称，避免额外拼接
+        for name in entity_candidates:
+            name = name.strip()
+            if name and name in context_text and name not in terms:
+                terms.append(name)
+
+        # 仅保留问题中出现的候选股票名称
+        for stock in relevant_stocks[:8]:
+            name = stock.get("name", "").strip()
+            if name and name in context_text and name not in terms:
+                terms.append(name)
+
+        domain_keywords = [
+            "减持", "增持", "回购", "中标", "订单", "签约", "供货", "采购",
+            "营收", "收入", "利润", "净利", "毛利率", "现金流", "业绩", "财报",
+            "产能", "产量", "扩产", "投产", "项目", "合作", "并购", "投资", "融资",
+            "定增", "股权", "股价", "估值", "市占率", "市场份额", "竞争", "龙头",
+            "政策", "补贴", "监管", "标准", "处罚", "停产", "复工", "事故", "整改",
+            "价格", "涨价", "降价", "研报", "公告"
+        ]
+        for kw in domain_keywords:
+            if kw in context_text and kw not in terms:
+                terms.append(kw)
+
+        # 选择性加入 search_keywords（仅在关键词不足时补足）
+        search_keywords = parsed_news.get('search_keywords', []) or []
+        if len(terms) < 4:
+            for kw in search_keywords:
+                if kw and kw not in terms:
+                    terms.append(kw)
+                if len(terms) >= 8:
+                    break
+
+        return terms
     
     def _get_news_evidence(self, question: str, candidate_stocks: List[Dict]) -> List[Dict]:
         """从新闻中获取证据"""

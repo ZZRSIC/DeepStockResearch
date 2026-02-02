@@ -75,27 +75,17 @@ class ReportGenerator:
         for rank, stock in enumerate(top_stocks, 1):
             ts_code = stock['ts_code']
             analysis = research_results.get('stock_analysis', {}).get(ts_code, {})
-            
             stock_info = {
                 "排名": rank,
                 "股票代码": ts_code,
                 "股票名称": stock['name'],
                 "所属行业": stock['industry'],
-                "综合评分": round(stock['total_score'], 2),
-                "各维度评分": {
-                    "相关性": round(stock['scores']['relevance'], 2),
-                    "基本面": round(stock['scores']['fundamental'], 2),
-                    "估值": round(stock['scores']['valuation'], 2),
-                    "动量": round(stock['scores']['momentum'], 2),
-                    "风险控制": round(stock['scores']['risk'], 2)
-                },
                 "投资逻辑": {
-                    "为什么相关": analysis.get('relevance', stock['relevance_reason']),
-                    "潜在影响": analysis.get('impact', '未知'),
-                    "影响确定性": analysis.get('confidence', '中等'),
-                    "时间框架": analysis.get('timeframe', '中期')
+                    "关联原因": analysis.get('relation_reason', stock['relevance_reason']),
+                    "关联路径": analysis.get('relation_path', '未知'),
+                    "相关性强度": analysis.get('relation_strength', '未知')
                 },
-                "主要风险点": analysis.get('risks', ['数据不足，无法评估']),
+                "主要风险点": analysis.get('risks', ['未评估（仅做相关性推荐）']),
                 "证据数量": analysis.get('evidence_count', 0)
             }
             
@@ -158,17 +148,11 @@ class ReportGenerator:
             lines.append("")
             lines.append(f"#{stock['排名']} {stock['股票名称']} ({stock['股票代码']})")
             lines.append(f"    行业: {stock['所属行业']}")
-            lines.append(f"    综合评分: {stock['综合评分']}/100")
-            lines.append(f"    各维度评分: 相关性={stock['各维度评分']['相关性']}, "
-                        f"基本面={stock['各维度评分']['基本面']}, "
-                        f"估值={stock['各维度评分']['估值']}, "
-                        f"动量={stock['各维度评分']['动量']}, "
-                        f"风险={stock['各维度评分']['风险控制']}")
             lines.append("")
             lines.append(f"    【投资逻辑】")
-            lines.append(f"    ▸ 相关性: {stock['投资逻辑']['为什么相关']}")
-            lines.append(f"    ▸ 潜在影响: {stock['投资逻辑']['潜在影响']}")
-            lines.append(f"    ▸ 确定性: {stock['投资逻辑']['影响确定性']}")
+            lines.append(f"    ▸ 关联原因: {stock['投资逻辑']['关联原因']}")
+            lines.append(f"    ▸ 关联路径: {stock['投资逻辑']['关联路径']}")
+            lines.append(f"    ▸ 相关性强度: {stock['投资逻辑']['相关性强度']}")
             lines.append("")
             lines.append(f"    【风险提示】")
             for risk in stock['主要风险点']:
@@ -184,6 +168,7 @@ class ReportGenerator:
         lines.append("=" * 80)
         
         return "\n".join(lines)
+
     
     def save_report(self, report: Dict, output_path: str, format: str = 'json'):
         """保存报告"""
