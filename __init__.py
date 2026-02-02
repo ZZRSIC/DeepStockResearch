@@ -4,7 +4,7 @@ A股 DeepResearch Pipeline
 """
 
 from .config import Config
-from .pipeline import AStockDeepResearchPipeline
+from .news2stock.pipeline import AStockDeepResearchPipeline
 from .step_a_news_parser import NewsParser
 from .step_b_stock_pool import StockPoolBuilder
 from .step_c_deep_research import DeepResearcher
